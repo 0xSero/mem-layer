@@ -1,0 +1,43 @@
+version: "1.0"
+
+storage:
+  backend: sqlite
+  path: "{scope_path}/memory.db"
+  auto_save: true
+  save_interval: 300
+
+graph:
+  default_scope: project
+  max_nodes: 10000
+  enable_temporal: true
+
+query:
+  default_limit: 100
+  max_depth: 5
+  enable_full_text: true
+
+memory:
+  consolidation:
+    enabled: true
+    interval: daily
+    keep_important: true
+    threshold: 0.7
+
+  decay:
+    enabled: true
+    half_life: 30
+    min_importance: 0.1
+
+ui:
+  cli:
+    output_format: table
+    color_scheme: auto
+
+  tui:
+    theme: dark
+
+  web:
+    host: localhost
+    port: 8080
+    cors_origins:
+      - http://localhost:3000

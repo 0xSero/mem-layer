@@ -1,0 +1,20 @@
+-r requirements.txt
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+
+# Linting and formatting
+black>=23.12.0
+mypy>=1.7.0
+ruff>=0.1.8
+
+# Development tools
+ipython>=8.18.0
+
+# Optional features for development
+fastapi>=0.108.0
+uvicorn>=0.25.0
+textual>=0.47.0
+matplotlib>=3.8.0
