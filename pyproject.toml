@@ -62,6 +62,7 @@ all = [
 
 [project.scripts]
 mem-layer = "mem_layer.cli.main:cli"
+mem-layer-mcp = "mem_layer.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/0xSero/mem-layer"

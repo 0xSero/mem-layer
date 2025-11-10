@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mem-layer": {
+      "command": "mem-layer-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

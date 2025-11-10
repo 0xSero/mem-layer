@@ -14,7 +14,8 @@ Mem-Layer provides AI models with persistent, structured memory using graph data
 - ⏰ **Temporal Awareness**: Track how knowledge changes over time
 - 🤝 **Model Communication**: Enable models to leave notes for each other
 - 🔒 **Access Control**: Define what models can read and modify
-- 🖥️ **Multiple Interfaces**: CLI, Terminal UI, and Web UI
+- 🖥️ **Multiple Interfaces**: CLI, Terminal UI, Web UI, and MCP Server
+- 🔌 **MCP Integration**: Works with Claude Desktop and other MCP clients
 
 ## Quick Start
 
@@ -59,6 +60,31 @@ mem-layer graph visualize --output graph.png
 # View statistics
 mem-layer graph stats
 ```
+
+### MCP Server (For Claude Desktop & AI Assistants)
+
+Mem-Layer includes an MCP server that lets AI assistants access persistent memory:
+
+```bash
+# Add to Claude Desktop configuration:
+# ~/.config/Claude/claude_desktop_config.json (Linux)
+# ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)
+{
+  "mcpServers": {
+    "mem-layer": {
+      "command": "mem-layer-mcp"
+    }
+  }
+}
+```
+
+Now Claude Desktop can use tools like:
+- `add_memory` - Store persistent memories
+- `query_memory` - Query with patterns
+- `search_memory` - Full-text search
+- `traverse_memory` - Follow relationship graphs
+
+See [MCP Server Documentation](docs/mcp-server.md) for details.
 
 ## Key Features
 
