@@ -1,7 +1,8 @@
 """Query engine for executing queries against the graph."""
 
+import math
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -11,6 +12,12 @@ from mem_layer.core.edge import Edge, EdgeType
 from mem_layer.core.graph import GraphManager
 from mem_layer.core.node import Node, NodeType
 from mem_layer.exceptions import QueryException
+
+
+# Decay constant: half-life of ~21 days (ln(2)/0.033 ≈ 21)
+RECENCY_DECAY_RATE = 0.033
+# Weight for recency in relevance scoring
+RECENCY_WEIGHT = 0.3
 
 
 class QueryType(str, Enum):
@@ -33,6 +40,7 @@ class Query(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     scope: str | None = None
     temporal: datetime | None = None
+    since: datetime | None = None  # Filter to nodes created after this time
     limit: int = 100
     offset: int = 0
 
@@ -89,6 +97,10 @@ class QueryEngine:
             # Apply scope filter
             if query.scope:
                 nodes = [n for n in nodes if n.scope == query.scope]
+
+            # Apply since filter (recency)
+            if query.since:
+                nodes = [n for n in nodes if n.created_at >= query.since]
 
             # Apply pagination
             total_count = len(nodes)
@@ -232,15 +244,32 @@ class QueryEngine:
                 node_type = NodeType(node_type)
             matching_nodes = [n for n in matching_nodes if n.type == node_type]
 
-        # Sort by relevance (simple: prefer matches in content over tags)
+        # Sort by relevance with recency decay
+        now = datetime.utcnow()
+
         def relevance_score(node: Node) -> float:
             score = 0.0
+            # Content match
             if text_lower in node.content.lower():
                 score += 1.0
+            # Tag match
             if text_lower in " ".join(node.tags).lower():
                 score += 0.5
             # Boost by importance
             score += node.importance * 0.2
+
+            # Recency decay: newer nodes score higher
+            # Decay formula: exp(-age_days * RECENCY_DECAY_RATE)
+            # This gives ~50% weight at 21 days, ~25% at 42 days
+            age_days = (now - node.created_at).total_seconds() / 86400
+            recency_factor = math.exp(-age_days * RECENCY_DECAY_RATE)
+            score += recency_factor * RECENCY_WEIGHT
+
+            # Boost for recently accessed nodes
+            access_age_days = (now - node.last_accessed).total_seconds() / 86400
+            if access_age_days < 7:  # Accessed in last week
+                score += 0.1
+
             return score
 
         matching_nodes.sort(key=relevance_score, reverse=True)

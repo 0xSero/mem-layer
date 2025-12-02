@@ -316,19 +316,53 @@ class MemoryAPI:
         )
         return self.query_engine.execute(query)
 
-    def search(self, text: str, scope: str | None = None, limit: int = 100) -> QueryResult:
+    def search(
+        self,
+        text: str,
+        scope: str | None = None,
+        limit: int = 100,
+        since: datetime | None = None,
+    ) -> QueryResult:
         """Full-text search.
 
         Args:
             text: Search text
             scope: Scope to search
             limit: Maximum results
+            since: Only return nodes created after this datetime
 
         Returns:
             Query results
         """
-        query = Query(type=QueryType.FULL_TEXT, text=text, scope=scope, limit=limit)
-        return self.query_engine.execute(query)
+        query = Query(
+            type=QueryType.FULL_TEXT,
+            text=text,
+            scope=scope,
+            limit=limit,
+            since=since,
+        )
+        result = self.query_engine.execute(query)
+
+        # Increment access count for returned nodes
+        self._increment_access_counts(result.nodes)
+
+        return result
+
+    def _increment_access_counts(self, nodes: list[Node]) -> None:
+        """Increment access count for nodes and persist.
+
+        Args:
+            nodes: List of nodes to update
+        """
+        for node in nodes:
+            node.increment_access()
+            # Persist the update
+            if self.config.storage.auto_save:
+                try:
+                    adapter = self._get_db_adapter()
+                    adapter.save_node(node)
+                except Exception:
+                    pass  # Don't fail search if access tracking fails
 
     def traverse(
         self, start_id: str, max_depth: int = 3, direction: str = "both"

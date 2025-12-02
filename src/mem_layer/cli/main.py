@@ -1,5 +1,6 @@
 """Main CLI application."""
 
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -116,10 +117,31 @@ def relate(source_id: str, target_id: str, relation_type: str) -> None:
     """Create a relationship between two nodes."""
     try:
         api = MemoryAPI()
-        edge = api.relate(source_id, target_id, relation_type)
+
+        # Find nodes by partial ID (like other commands)
+        all_nodes = api.query("*", limit=1000).nodes
+        source_matches = [n for n in all_nodes if n.id.startswith(source_id)]
+        target_matches = [n for n in all_nodes if n.id.startswith(target_id)]
+
+        if not source_matches:
+            console.print(f"[red]Source node not found:[/red] {source_id}")
+            return
+        if not target_matches:
+            console.print(f"[red]Target node not found:[/red] {target_id}")
+            return
+        if len(source_matches) > 1:
+            console.print(f"[red]Multiple source nodes match:[/red] {source_id}")
+            console.print("[yellow]Use full ID or more characters[/yellow]")
+            return
+        if len(target_matches) > 1:
+            console.print(f"[red]Multiple target nodes match:[/red] {target_id}")
+            console.print("[yellow]Use full ID or more characters[/yellow]")
+            return
+
+        edge = api.create_edge(source_matches[0].id, target_matches[0].id, EdgeType(relation_type))
 
         console.print(f"[green]✓[/green] Created relationship: {edge.id[:8]}")
-        console.print(f"  {source_id[:8]} --[{relation_type}]--> {target_id[:8]}")
+        console.print(f"  {source_matches[0].id[:8]} --[{relation_type}]--> {target_matches[0].id[:8]}")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -167,15 +189,50 @@ def query(pattern: str, scope: str | None, limit: int) -> None:
         raise click.Abort()
 
 
+def parse_since(since: str | None) -> datetime | None:
+    """Parse --since argument into datetime.
+
+    Supports:
+    - ISO format: 2025-01-01, 2025-01-01T12:00:00
+    - Relative: 7d (7 days), 2w (2 weeks), 1m (1 month)
+    """
+    if not since:
+        return None
+
+    from datetime import timedelta
+    import re
+
+    # Try relative format first (e.g., 7d, 2w, 1m)
+    match = re.match(r'^(\d+)([dwm])$', since.lower())
+    if match:
+        amount = int(match.group(1))
+        unit = match.group(2)
+        now = datetime.utcnow()
+        if unit == 'd':
+            return now - timedelta(days=amount)
+        elif unit == 'w':
+            return now - timedelta(weeks=amount)
+        elif unit == 'm':
+            return now - timedelta(days=amount * 30)
+
+    # Try ISO format
+    try:
+        return datetime.fromisoformat(since)
+    except ValueError:
+        return None
+
+
 @cli.command()
 @click.argument("text")
 @click.option("--scope", help="Scope to search")
 @click.option("--limit", type=int, default=20, help="Maximum results")
-def search(text: str, scope: str | None, limit: int) -> None:
+@click.option("--since", help="Only show entries since date (e.g., 7d, 2w, 1m, or 2025-01-01)")
+def search(text: str, scope: str | None, limit: int, since: str | None) -> None:
     """Full-text search."""
     try:
         api = MemoryAPI(scope=scope)
-        result = api.search(text, limit=limit)
+        since_dt = parse_since(since)
+        result = api.search(text, limit=limit, since=since_dt)
 
         if not result.nodes:
             console.print("[yellow]No results found[/yellow]")
@@ -542,6 +599,223 @@ def info(name: str | None) -> None:
         console.print(f"  Max edges: {scope_obj.config.max_edges}")
         console.print(f"  Temporal tracking: {scope_obj.config.enable_temporal}")
         console.print(f"  Auto-save: {scope_obj.config.auto_save}")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise click.Abort()
+
+
+# Maintenance commands
+
+
+@cli.command()
+@click.option("--scope", help="Scope to analyze")
+def analyze(scope: str | None) -> None:
+    """Analyze memory for cleanup recommendations."""
+    try:
+        api = MemoryAPI(scope=scope)
+        result = api.query("*", limit=1000)
+
+        if not result.nodes:
+            console.print("[yellow]No nodes found[/yellow]")
+            return
+
+        # Analyze by tags
+        tag_counts: dict[str, int] = {}
+        type_counts: dict[str, list] = {"learning": [], "history": [], "error": []}
+        old_nodes = []
+        low_access = []
+
+        now = datetime.utcnow()
+        from datetime import timedelta
+
+        for node in result.nodes:
+            # Count tags
+            for tag in node.tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+            # Categorize by type tags
+            if "learning" in node.tags:
+                type_counts["learning"].append(node)
+            if "history" in node.tags:
+                type_counts["history"].append(node)
+            if "error" in node.tags:
+                type_counts["error"].append(node)
+
+            # Find old nodes (>30 days)
+            age_days = (now - node.created_at).total_seconds() / 86400
+            if age_days > 30 and node.importance < 0.6:
+                old_nodes.append((node, age_days))
+
+            # Find low access nodes
+            if node.access_count == 0 and age_days > 7:
+                low_access.append(node)
+
+        console.print("\n[bold]Memory Analysis[/bold]")
+        console.print(f"Total nodes: {result.total_count}")
+
+        console.print("\n[bold]By Type:[/bold]")
+        for type_name, nodes in type_counts.items():
+            status = "[green]OK[/green]" if len(nodes) <= 5 else "[yellow]Consider compaction[/yellow]"
+            console.print(f"  {type_name}: {len(nodes)} {status}")
+
+        console.print("\n[bold]Top Topics:[/bold]")
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        for tag, count in sorted_tags:
+            if tag not in ["learning", "history", "error"]:
+                status = "[yellow]needs cleanup[/yellow]" if count > 5 else ""
+                console.print(f"  {tag}: {count} {status}")
+
+        if old_nodes:
+            console.print(f"\n[bold]Old nodes (>30 days, low importance):[/bold] {len(old_nodes)}")
+            for node, age in old_nodes[:5]:
+                console.print(f"  {node.id[:8]}: {node.content[:40]}... ({age:.0f} days)")
+
+        if low_access:
+            console.print(f"\n[bold]Never accessed (>7 days old):[/bold] {len(low_access)}")
+
+        # Recommendations
+        console.print("\n[bold]Recommendations:[/bold]")
+        if len(type_counts["history"]) > 5:
+            console.print("  - Run: mem-layer compact --type history --topic <topic>")
+        if len(type_counts["error"]) > 5:
+            console.print("  - Run: mem-layer compact --type error --topic <topic>")
+        if old_nodes:
+            console.print("  - Consider pruning old low-importance nodes")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise click.Abort()
+
+
+@cli.command()
+@click.argument("topic")
+@click.option("--type", "entry_type", type=click.Choice(["history", "error", "learning"]), required=True)
+@click.option("--scope", help="Scope to compact")
+@click.option("--dry-run", is_flag=True, help="Show what would be compacted without making changes")
+def compact(topic: str, entry_type: str, scope: str | None, dry_run: bool) -> None:
+    """Compact multiple entries of a topic into a summary.
+
+    Example: mem-layer compact python-venv --type history
+    """
+    try:
+        api = MemoryAPI(scope=scope)
+
+        # Find all nodes matching topic and type
+        result = api.search(f"{topic} {entry_type}", limit=100)
+        matching = [
+            n for n in result.nodes
+            if topic in n.tags and entry_type in n.tags
+        ]
+
+        if len(matching) <= 2:
+            console.print(f"[yellow]Only {len(matching)} entries found - no compaction needed[/yellow]")
+            return
+
+        console.print(f"\n[bold]Found {len(matching)} {entry_type} entries for '{topic}'[/bold]")
+
+        # Sort by created_at
+        matching.sort(key=lambda n: n.created_at)
+
+        # Show entries to be compacted
+        console.print("\n[bold]Entries to compact:[/bold]")
+        for node in matching:
+            console.print(f"  [{node.created_at.strftime('%Y-%m-%d')}] {node.content[:60]}...")
+
+        if dry_run:
+            console.print("\n[yellow]Dry run - no changes made[/yellow]")
+            console.print("\nSuggested compaction format:")
+            if entry_type == "history":
+                console.print("  Timeline: event1 (date) -> event2 (date) -> current")
+            elif entry_type == "error":
+                console.print("  Common issues: 1. problem -> fix, 2. problem -> fix")
+            elif entry_type == "learning":
+                console.print("  RULES: 1. Always X, 2. Never Y, 3. Prefer Z")
+            return
+
+        # Create compacted summary
+        contents = [f"[{n.created_at.strftime('%Y-%m-%d')}] {n.content}" for n in matching]
+        summary = f"[COMPACTED {entry_type.upper()}] " + " | ".join(contents)
+
+        # Keep highest importance from original nodes
+        max_importance = max(n.importance for n in matching)
+
+        # Create new compacted node
+        priority = "high" if max_importance >= 0.8 else "normal" if max_importance >= 0.5 else "low"
+        new_node = api.add_note(
+            content=summary,
+            tags=[topic, entry_type, "compacted"],
+            priority=priority,
+        )
+
+        console.print(f"\n[green]✓[/green] Created compacted node: {new_node.id[:8]}")
+
+        # Delete old nodes
+        deleted = 0
+        for node in matching:
+            api.delete_node(node.id)
+            deleted += 1
+
+        console.print(f"[green]✓[/green] Deleted {deleted} old entries")
+        console.print(f"\n[bold]Compaction complete![/bold]")
+        console.print("Tip: Edit the compacted node to create a cleaner summary")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise click.Abort()
+
+
+@cli.command()
+@click.option("--scope", help="Scope to prune")
+@click.option("--older-than", default="30d", help="Delete nodes older than (e.g., 30d, 60d)")
+@click.option("--max-importance", type=float, default=0.4, help="Only delete nodes with importance below this")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted without making changes")
+def prune(scope: str | None, older_than: str, max_importance: float, dry_run: bool) -> None:
+    """Prune old low-importance nodes."""
+    try:
+        api = MemoryAPI(scope=scope)
+
+        # Parse older_than
+        since = parse_since(older_than)
+        if not since:
+            console.print(f"[red]Invalid time format:[/red] {older_than}")
+            return
+
+        result = api.query("*", limit=1000)
+        candidates = []
+
+        for node in result.nodes:
+            if node.created_at < since and node.importance <= max_importance:
+                # Don't prune learnings
+                if "learning" not in node.tags:
+                    candidates.append(node)
+
+        if not candidates:
+            console.print("[yellow]No nodes match pruning criteria[/yellow]")
+            return
+
+        console.print(f"\n[bold]Pruning candidates ({len(candidates)} nodes):[/bold]")
+        for node in candidates[:10]:
+            age = (datetime.utcnow() - node.created_at).days
+            console.print(f"  {node.id[:8]}: {node.content[:50]}... (imp={node.importance:.2f}, {age}d old)")
+        if len(candidates) > 10:
+            console.print(f"  ... and {len(candidates) - 10} more")
+
+        if dry_run:
+            console.print("\n[yellow]Dry run - no changes made[/yellow]")
+            return
+
+        # Confirm
+        if not click.confirm(f"\nDelete {len(candidates)} nodes?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+        deleted = 0
+        for node in candidates:
+            api.delete_node(node.id)
+            deleted += 1
+
+        console.print(f"\n[green]✓[/green] Pruned {deleted} nodes")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
