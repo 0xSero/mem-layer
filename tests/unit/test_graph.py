@@ -81,6 +81,29 @@ def test_get_edges(graph_manager):
     assert len(relates_edges) == 1
 
 
+def test_unrecognized_direction_stays_on_the_node(graph_manager):
+    """direction outgoing must not return an edge between two other nodes."""
+    node1 = Node(type=NodeType.ENTITY, scope="test", content="Node 1")
+    node2 = Node(type=NodeType.ENTITY, scope="test", content="Node 2")
+    node3 = Node(type=NodeType.ENTITY, scope="test", content="Node 3")
+    node4 = Node(type=NodeType.ENTITY, scope="test", content="Node 4")
+    for node in (node1, node2, node3, node4):
+        graph_manager.add_node(node)
+
+    near = Edge(source_id=node1.id, target_id=node2.id, type=EdgeType.RELATES_TO)
+    far = Edge(source_id=node3.id, target_id=node4.id, type=EdgeType.RELATES_TO)
+    back = Edge(source_id=node2.id, target_id=node1.id, type=EdgeType.DEPENDS_ON)
+    graph_manager.add_edge(near)
+    graph_manager.add_edge(far)
+    graph_manager.add_edge(back)
+
+    found = graph_manager.get_edges(node1.id, direction="outgoing")
+    assert [edge.id for edge in found] == [near.id, back.id]
+    assert [edge.id for edge in graph_manager.get_edges(node1.id, direction="out")] == [near.id]
+    assert [edge.id for edge in graph_manager.get_edges(node1.id, direction="in")] == [back.id]
+    assert [edge.id for edge in graph_manager.get_edges(node1.id, direction="both")] == [near.id, back.id]
+
+
 def test_delete_node(graph_manager):
     """Test deleting a node."""
     node = Node(type=NodeType.ENTITY, scope="test", content="Test node")

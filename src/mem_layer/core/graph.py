@@ -133,12 +133,13 @@ class GraphManager:
         result = []
 
         for edge_id, edge in self.edges.items():
-            # Check direction
-            if direction == "out" and edge.source_id != node_id:
-                continue
-            if direction == "in" and edge.target_id != node_id:
-                continue
-            if direction == "both" and edge.source_id != node_id and edge.target_id != node_id:
+            if direction == "out":
+                if edge.source_id != node_id:
+                    continue
+            elif direction == "in":
+                if edge.target_id != node_id:
+                    continue
+            elif edge.source_id != node_id and edge.target_id != node_id:
                 continue
 
             # Check edge type
